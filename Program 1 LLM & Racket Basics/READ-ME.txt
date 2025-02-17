@@ -1,0 +1,8 @@
+Data files for program 1: 
+Data-1: A few positive integers. 
+Data-2: A few more values. Another simple data file. 
+Data-3: All the same value. 
+Data-4: Already sorted. 
+Data-5: Mix of positive and negative values. Should be no problem. 
+Data-6: Mostly duplicate values. 
+Data-7: Test for scale. 1,000,000 values. 

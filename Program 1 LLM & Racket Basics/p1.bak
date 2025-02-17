@@ -1,0 +1,50 @@
+#lang racket
+
+; Function to create a list of value-frequency pairs
+(define (count-frequencies lst)
+  (define freq-hash (make-hash))
+  (for-each (lambda (x)
+              (hash-update! freq-hash x add1 0))
+            lst)
+  (hash->list freq-hash))
+
+; Function to sort the list of value-frequency pairs by value
+(define (sort-pairs pairs)
+  (sort pairs (lambda (x y) (< (car x) (car y)))))
+
+; Function to expand the sorted list of value-frequency pairs into a sorted list of integers
+(define (expand-pairs pairs)
+  (apply append
+         (map (lambda (pair)
+                (make-list (cdr pair) (car pair))) ; Use cdr for the frequency
+              pairs)))
+
+; Function to check if a list is sorted
+(define (sorted? lst)
+  (cond
+    [(null? lst) #t]
+    [(null? (cdr lst)) #t]
+    [(<= (car lst) (cadr lst)) (sorted? (cdr lst))]
+    [else #f]))
+
+; Function to read integers from multiple files, sort them, and write the sorted list and count-value pairs to a new file
+(define (sort-integers-from-files input-files output-file)
+  (define lst (apply append (map file->list input-files))) ; Concatenate contents of all input files
+  (define freq-pairs (count-frequencies lst))
+  (define sorted-pairs (sort-pairs freq-pairs))
+  (define sorted-list (expand-pairs sorted-pairs))
+  (if (sorted? sorted-list)
+      (call-with-output-file output-file
+        (lambda (out)
+          (fprintf out "Count-Value Pairs:\n")
+          (for-each (lambda (pair)
+                      (fprintf out "~a: ~a\n" (car pair) (cdr pair)))
+                    sorted-pairs)
+          (fprintf out "\nSorted List of Integers:\n")
+          (fprintf out "~a\n" sorted-list)))
+      (error "The list is not sorted!")))
+
+; Example usage with multiple input files
+(define input-filenames '("Data-1.txt" "Data-2.txt" "Data-3.txt" "Data-4.txt" "Data-5.txt" "Data-6.txt" "Data-7.txt")) ; List of input file names
+(define output-filename "sorted_integers.txt") ; Output file name
+(sort-integers-from-files input-filenames output-filename)
