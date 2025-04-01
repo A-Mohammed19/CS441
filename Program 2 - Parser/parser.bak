@@ -1,0 +1,380 @@
+#lang racket
+
+;; Lexical analyzer
+(define (tokenize input-string)
+  (define tokens '())
+  (define current-line 1)
+  (define line-positions '())
+  
+  (define (add-token type value)
+    (set! tokens (append tokens (list (list type value current-line)))))
+  
+  (define (add-line-position pos)
+    (set! line-positions (append line-positions (list (cons current-line pos)))))
+  
+  (let loop ((i 0))
+    (when (< i (string-length input-string))
+      (let ((c (string-ref input-string i)))
+        (cond
+          ;; New line
+          [(char=? c #\newline)
+           (set! current-line (add1 current-line))
+           (add-line-position (add1 i))
+           (loop (add1 i))]
+          
+          ;; Whitespace
+          [(char-whitespace? c)
+           (loop (add1 i))]
+          
+          ;; Identifiers: letters
+          [(char-alphabetic? c)
+           (let id-loop ((j (add1 i)))
+             (if (and (< j (string-length input-string))
+                      (char-alphabetic? (string-ref input-string j)))
+                 (id-loop (add1 j))
+                 (begin
+                   (add-token 'ID (substring input-string i j))
+                   (loop j))))]
+          
+          ;; Numbers: digits
+          [(char-numeric? c)
+           (let num-loop ((j (add1 i)))
+             (if (and (< j (string-length input-string))
+                      (char-numeric? (string-ref input-string j)))
+                 (num-loop (add1 j))
+                 (begin
+                   (add-token 'NUM (substring input-string i j))
+                   (loop j))))]
+          
+          ;; Special keywords
+          [(char=? c #\i)
+           (if (and (< (+ i 1) (string-length input-string))
+                   (char=? (string-ref input-string (+ i 1)) #\f))
+               (begin
+                 (add-token 'IF "if")
+                 (loop (+ i 2)))
+               (let id-loop ((j (add1 i)))
+                 (if (and (< j (string-length input-string))
+                          (char-alphabetic? (string-ref input-string j)))
+                     (id-loop (add1 j))
+                     (begin
+                       (add-token 'ID (substring input-string i j))
+                       (loop j)))))]
+          
+          [(and (>= (+ i 5) (string-length input-string))
+                (string=? (substring input-string i (+ i 5)) "endif"))
+           (add-token 'ENDIF "endif")
+           (loop (+ i 5))]
+          
+          [(and (>= (+ i 4) (string-length input-string))
+                (string=? (substring input-string i (+ i 4)) "read"))
+           (add-token 'READ "read")
+           (loop (+ i 4))]
+          
+          [(and (>= (+ i 5) (string-length input-string))
+                (string=? (substring input-string i (+ i 5)) "write"))
+           (add-token 'WRITE "write")
+           (loop (+ i 5))]
+          
+          ;; Signs and operators
+          [(char=? c #\+) (add-token 'PLUS "+") (loop (add1 i))]
+          [(char=? c #\-) (add-token 'MINUS "-") (loop (add1 i))]
+          [(char=? c #\=)
+           (if (and (< (add1 i) (string-length input-string))
+                   (char=? (string-ref input-string (add1 i)) #\=))
+               (begin
+                 (add-token 'EQUALS "==")
+                 (loop (+ i 2)))
+               (begin
+                 (add-token 'ASSIGN "=")
+                 (loop (add1 i))))]
+          [(char=? c #\<)
+           (if (and (< (add1 i) (string-length input-string))
+                   (char=? (string-ref input-string (add1 i)) #\=))
+               (begin
+                 (add-token 'LESSEQ "<=")
+                 (loop (+ i 2)))
+               (begin
+                 (add-token 'LESS "<")
+                 (loop (add1 i))))]
+          [(char=? c #\>)
+           (if (and (< (add1 i) (string-length input-string))
+                   (char=? (string-ref input-string (add1 i)) #\=))
+               (begin
+                 (add-token 'GREATEQ ">=")
+                 (loop (+ i 2)))
+               (begin
+                 (add-token 'GREATER ">")
+                 (loop (add1 i))))]
+          [(char=? c #\!)
+           (if (and (< (add1 i) (string-length input-string))
+                   (char=? (string-ref input-string (add1 i)) #\=))
+               (begin
+                 (add-token 'NOTEQ "!=")
+                 (loop (+ i 2)))
+               (begin
+                 (add-token 'ERROR "!")
+                 (loop (add1 i))))]
+          
+          ;; Special characters
+          [(char=? c #\;) (add-token 'SEMICOLON ";") (loop (add1 i))]
+          [(char=? c #\() (add-token 'LPAREN "(") (loop (add1 i))]
+          [(char=? c #\)) (add-token 'RPAREN ")") (loop (add1 i))]
+          [(char=? c #\$)
+           (if (and (< (add1 i) (string-length input-string))
+                   (char=? (string-ref input-string (add1 i)) #\$))
+               (begin
+                 (add-token 'ENDMARKER "$$")
+                 (loop (+ i 2)))
+               (begin
+                 (add-token 'ERROR "$")
+                 (loop (add1 i))))]
+          
+          ;; Invalid character
+          [else
+           (add-token 'ERROR (string c))
+           (loop (add1 i))]))))
+  
+  (values tokens line-positions))
+
+;; Parser
+(define (parse filename)
+  (define input (file->string filename))
+  (define-values (tokens line-positions) (tokenize input))
+  (define current-token-index 0)
+  (define parse-error #f)
+  
+  ;; Look at current token without consuming it
+  (define (peek-token)
+    (if (< current-token-index (length tokens))
+        (list-ref tokens current-token-index)
+        (list 'EOF "" 0)))
+  
+  ;; Consume and return the current token
+  (define (consume-token)
+    (let ((token (peek-token)))
+      (set! current-token-index (add1 current-token-index))
+      token))
+  
+  ;; Match a specific token type
+  (define (match-token expected-type)
+    (let ((token (peek-token)))
+      (if (eq? (first token) expected-type)
+          (consume-token)
+          (begin
+            (set! parse-error (format "Syntax error at line ~a: expected ~a but got ~a"
+                                      (third token)
+                                      expected-type
+                                      (first token)))
+            #f))))
+  
+  ;; Get the line content for error reporting
+  (define (get-line-content line-number)
+    (let loop ((line-pos-pairs line-positions)
+               (start 0)
+               (end (string-length input)))
+      (cond
+        [(null? line-pos-pairs) (substring input start end)]
+        [(= (caar line-pos-pairs) line-number) 
+         (substring input start (cdar line-pos-pairs))]
+        [else (loop (cdr line-pos-pairs) (cdar line-pos-pairs) end)])))
+  
+  ;; Grammar implementation - recursive descent functions
+  
+  ;; Forward declarations to avoid unbound identifier errors
+  (define parse-expr #f)
+  (define parse-stmt #f)
+  (define parse-stmt-list #f)
+  
+  ;; program -> {stmt_list} $$
+  (define (parse-program)
+    (let ((result (parse-stmt-list)))
+      (if (and result (match-token 'ENDMARKER))
+          (list 'PROGRAM result)
+          #f)))
+  
+  ;; num -> numsign digit digit*
+  (define (parse-num)
+    (let ((token (peek-token)))
+      (cond
+        [(eq? (first token) 'PLUS)
+         (consume-token) ; consume +
+         (let ((num (match-token 'NUM)))
+           (if num
+               (list 'NUM (string->number (string-append "+" (second num))))
+               #f))]
+        
+        [(eq? (first token) 'MINUS)
+         (consume-token) ; consume -
+         (let ((num (match-token 'NUM)))
+           (if num
+               (list 'NUM (string->number (string-append "-" (second num))))
+               #f))]
+        
+        [(eq? (first token) 'NUM)
+         (let ((num (match-token 'NUM)))
+           (if num
+               (list 'NUM (string->number (second num)))
+               #f))]
+        
+        [else #f])))
+  
+  ;; compare -> < | <= | > | >= | == | !=
+  (define (parse-compare)
+    (let ((token (peek-token)))
+      (cond
+        [(eq? (first token) 'LESS)
+         (consume-token)
+         '<]
+        [(eq? (first token) 'LESSEQ)
+         (consume-token)
+         '<=]
+        [(eq? (first token) 'GREATER)
+         (consume-token)
+         '>]
+        [(eq? (first token) 'GREATEQ)
+         (consume-token)
+         '>=]
+        [(eq? (first token) 'EQUALS)
+         (consume-token)
+         '==]
+        [(eq? (first token) 'NOTEQ)
+         (consume-token)
+         '!=]
+        [else #f])))
+  
+  ;; etail -> + expr | - expr | compare expr | epsilon
+  (define (parse-etail)
+    (let ((token (peek-token)))
+      (cond
+        [(eq? (first token) 'PLUS)
+         (consume-token) ; consume +
+         (let ((expr-result (parse-expr)))
+           (if expr-result
+               (list 'ETAIL '+ expr-result)
+               #f))]
+        
+        [(eq? (first token) 'MINUS)
+         (consume-token) ; consume -
+         (let ((expr-result (parse-expr)))
+           (if expr-result
+               (list 'ETAIL '- expr-result)
+               #f))]
+        
+        [(or (eq? (first token) 'LESS)
+             (eq? (first token) 'LESSEQ)
+             (eq? (first token) 'GREATER)
+             (eq? (first token) 'GREATEQ)
+             (eq? (first token) 'EQUALS)
+             (eq? (first token) 'NOTEQ))
+         (let ((compare (parse-compare)))
+           (if compare
+               (let ((expr-result (parse-expr)))
+                 (if expr-result
+                     (list 'ETAIL compare expr-result)
+                     #f))
+               #f))]
+        
+        [else '()]))) ; epsilon case
+  
+  ;; Set the recursive functions after they've been declared
+  (set! parse-expr
+        (lambda ()
+          (let ((token (peek-token)))
+            (cond
+              [(eq? (first token) 'ID)
+               (let ((id (match-token 'ID)))
+                 (if id
+                     (let ((etail (parse-etail)))
+                       (if etail
+                           (list 'EXPR (list 'ID (second id)) etail)
+                           (list 'EXPR (list 'ID (second id)))))
+                     #f))]
+              
+              [(or (eq? (first token) 'NUM)
+                   (eq? (first token) 'PLUS)
+                   (eq? (first token) 'MINUS))
+               (let ((num (parse-num)))
+                 (if num
+                     (let ((etail (parse-etail)))
+                       (if etail
+                           (list 'EXPR num etail)
+                           (list 'EXPR num)))
+                     #f))]
+              
+              [else #f]))))
+  
+  (set! parse-stmt
+        (lambda ()
+          (let ((token (peek-token)))
+            (cond
+              [(eq? (first token) 'ID)
+               (let ((id (match-token 'ID)))
+                 (if (and id (match-token 'ASSIGN))
+                     (let ((expr (parse-expr)))
+                       (if (and expr (match-token 'SEMICOLON))
+                           (list 'ASSIGN_STMT (second id) expr)
+                           #f))
+                     #f))]
+              
+              [(eq? (first token) 'IF)
+               (consume-token) ; consume IF
+               (if (match-token 'LPAREN)
+                   (let ((expr (parse-expr)))
+                     (if (and expr (match-token 'RPAREN))
+                         (let ((stmt-list (parse-stmt-list)))
+                           (if (and stmt-list 
+                                    (match-token 'ENDIF) 
+                                    (match-token 'SEMICOLON))
+                               (list 'IF_STMT expr stmt-list)
+                               #f))
+                         #f))
+                   #f)]
+              
+              [(eq? (first token) 'READ)
+               (consume-token) ; consume READ
+               (let ((id (match-token 'ID)))
+                 (if (and id (match-token 'SEMICOLON))
+                     (list 'READ_STMT (second id))
+                     #f))]
+              
+              [(eq? (first token) 'WRITE)
+               (consume-token) ; consume WRITE
+               (let ((expr (parse-expr)))
+                 (if (and expr (match-token 'SEMICOLON))
+                     (list 'WRITE_STMT expr)
+                     #f))]
+              
+              [else #f]))))
+  
+  (set! parse-stmt-list
+        (lambda ()
+          (let ((token (peek-token)))
+            (if (or (eq? (first token) 'ID) 
+                    (eq? (first token) 'IF)
+                    (eq? (first token) 'READ)
+                    (eq? (first token) 'WRITE))
+                (let ((stmt (parse-stmt)))
+                  (if stmt
+                      (let ((stmt-list (parse-stmt-list)))
+                        (if stmt-list
+                            (list 'STMT_LIST stmt stmt-list)
+                            (list 'STMT_LIST stmt)))
+                      (list 'STMT_LIST)))  ; error in stmt, return empty list
+                (list 'STMT_LIST)))))  ; epsilon case
+  
+  ;; Start parsing
+  (let ((parse-tree (parse-program)))
+    (if parse-error
+        (let* ((error-token (peek-token))
+               (line-number (third error-token))
+               (line-content (get-line-content line-number)))
+          (string-append parse-error "\nLine " (number->string line-number) ": " line-content))
+        (format "Accept\n~a" parse-tree))))
+
+;; Main function - exports the parse function for use
+(provide parse)
+(parse "file1.txt")
+(parse "file2.txt")
+(parse "file3.txt")
+(parse "file4.txt")
